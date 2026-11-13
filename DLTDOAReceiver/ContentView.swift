@@ -125,13 +125,14 @@ struct ContentView: View {
                     .disabled(manager.isRunning)
             }
 
-            Picker("Discovery", selection: $manager.discoveryChoice) {
-                ForEach(DiscoveryChoice.allCases) { choice in
-                    Text(choice.rawValue).tag(choice)
-                }
+            HStack {
+                Text("Discovery")
+                    .font(.subheadline)
+                Spacer()
+                Text("BLE (iOS 26)")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
             }
-            .pickerStyle(.segmented)
-            .disabled(manager.isRunning)
 
             HStack(spacing: 10) {
                 Button {

@@ -4,13 +4,6 @@ import CoreLocation
 import NearbyInteraction
 import UIKit
 
-enum DiscoveryChoice: String, CaseIterable, Identifiable {
-    case bluetoothLowEnergy = "BLE (Default)"
-    case wifi = "Wi-Fi (iOS 27+)"
-
-    var id: String { rawValue }
-}
-
 enum LogLevel: String, CaseIterable {
     case info = "INFO"
     case success = "OK"
@@ -53,7 +46,6 @@ final class DLTDOAManager: NSObject, ObservableObject {
     @Published var logRawPackets: Bool = true
 
     @Published var networkIdentifierText: String = "42"
-    @Published var discoveryChoice: DiscoveryChoice = .bluetoothLowEnergy
 
     @Published var observationsByAddress: [Int: AnchorObservation] = [:]
     @Published var solvedPosition: SolvedPosition?
@@ -124,16 +116,8 @@ final class DLTDOAManager: NSObject, ObservableObject {
             session.delegate = self
             self.niSession = session
 
-            let config: NIDLTDOAConfiguration
-            if #available(iOS 27.0, *) {
-                let method: NIDLTDOAConfiguration.DiscoveryMethod =
-                    (discoveryChoice == .wifi) ? .wifi : .bluetoothLowEnergy
-                config = NIDLTDOAConfiguration(networkIdentifier: netID, discoveryMethod: method)
-                appendLog(.success, "Starting NISession (networkID=\(netID), discovery=\(discoveryChoice.rawValue))")
-            } else {
-                config = NIDLTDOAConfiguration(networkIdentifier: netID)
-                appendLog(.success, "Starting NISession (networkID=\(netID), discovery=BLE default)")
-            }
+            let config = NIDLTDOAConfiguration(networkIdentifier: netID)
+            appendLog(.success, "Starting NISession (networkID=\(netID), discovery=BLE)")
 
             session.run(config)
             isRunning = true
@@ -234,15 +218,10 @@ extension DLTDOAManager: NISessionDelegate {
             @unknown default: typeDesc = "unknown(\(m.measurementType.rawValue))"
             }
 
-            var initiatorAddr: Int? = nil
-            if #available(iOS 27.0, *) {
-                initiatorAddr = m.clusterInitiatorAddress
-            }
-
             let isRel = (m.coordinatesType == .relative)
             return AnchorObservation(
                 address: m.address,
-                clusterInitiatorAddress: initiatorAddr,
+                clusterInitiatorAddress: nil,
                 position2D: SIMD2<Double>(m.coordinates.x, m.coordinates.y),
                 position3D: m.coordinates,
                 isRelative: isRel,
