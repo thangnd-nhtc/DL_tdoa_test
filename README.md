@@ -11,14 +11,10 @@
   - *iOS 27.0+:* Theo tài liệu Apple, DL-TDoA không còn yêu cầu entitlement, và hỗ trợ thêm `DiscoveryMethod.wifi`.
 - **Xcode** tương thích iOS 26+ SDK trên macOS.
 
-## Cách tạo project Xcode nhanh trên Mac
-1. Mở Xcode -> **File -> New -> Project... -> iOS -> App** (Interface: **SwiftUI**, Language: **Swift**), đặt tên `DLTDOAReceiver`.
-2. Copy 4 file Swift (`DLTDOAReceiverApp.swift`, `DLTDOAManager.swift`, `DLTDOASolver.swift`, `ContentView.swift`) vào target app.
-3. Trong **Target -> Info**, thêm 2 key từ `Info.plist`:
-   - `Privacy - Location When In Use Usage Description` (`NSLocationWhenInUseUsageDescription`)
-   - `Privacy - Nearby Interaction Usage Description` (`NSNearbyInteractionUsageDescription`)
-4. Đặt **Minimum Deployments** = **iOS 26.0** (hoặc chọn iOS version bạn đang dùng).
-5. Kết nối iPhone thật, chọn Team Signing và **Run**.
+## Cách mở và build trên Mac (Xcode)
+1. Clone repo và mở trực tiếp file **`DLTDOAReceiver.xcodeproj`** bằng Xcode.
+2. Chọn target **DLTDOAReceiver** -> tab **Signing & Capabilities** -> chọn **Team** của bạn (và đổi Bundle Identifier nếu cần).
+3. Cắm iPhone thật (hỗ trợ UWB, iOS 26.0+) và nhấn **Run (Cmd + R)**.
 
 ## Lưu ý về Discovery (BLE / Wi-Fi)
 - Theo tài liệu Apple, `NIDLTDOAConfiguration(networkIdentifier: 42)` dùng **BLE** (mặc định) hoặc **Wi-Fi** (iOS 27+) để **discover** anchor trước khi thu UWB DL-TDoA.
