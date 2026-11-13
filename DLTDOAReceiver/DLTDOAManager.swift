@@ -125,6 +125,56 @@ final class DLTDOAManager: NSObject, ObservableObject {
         }
     }
 
+    func startExperimentalOOBHexSession() {
+        let auth = locationManager.authorizationStatus
+        guard auth == .authorizedWhenInUse || auth == .authorizedAlways else {
+            statusMessage = "Location authorization required."
+            appendLog(.error, statusMessage)
+            return
+        }
+
+        let netID = UInt32(max(0, Int(networkIdentifierText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 42))
+        stopSession()
+
+        // Build FiRa OOB-style TLV frame matching test_3anchors_1tag.py (session=netID, ch=9, preamble=10, slot=2400, interval=200ms, slots=25)
+        var bytes: [UInt8] = [
+            0x01, 0x00, 0x00, 0x00,             // FiRa OOB v1.0, Vendor 0x0000
+            0x00, 0x04,                         // Session ID (LE)
+            UInt8(netID & 0xFF),
+            UInt8((netID >> 8) & 0xFF),
+            UInt8((netID >> 16) & 0xFF),
+            UInt8((netID >> 24) & 0xFF),
+            0x01, 0x01, 0x08,                   // Device Role: 0x08 (DT-Tag)
+            0x02, 0x01, 0x05,                   // Ranging Round Usage: 0x05 (DL-TDoA)
+            0x03, 0x01, 0x01,                   // Multi-Node Mode: 0x01 (One-to-Many)
+            0x04, 0x01, 0x09,                   // Channel: 9
+            0x14, 0x01, 0x0A,                   // Preamble Code Index: 10
+            0x08, 0x02, 0x60, 0x09,             // Slot Duration: 2400 RSTU (2ms)
+            0x09, 0x04, 0xC8, 0x00, 0x00, 0x00, // Ranging Interval: 200ms
+            0x1B, 0x01, 0x19,                   // Slots Per Ranging Round: 25 (0x19)
+            0x05, 0x01, 0x00,                   // STS Config: 0x00 (Static STS)
+            0x07, 0x02, 0xA1, 0x00              // Anchor MAC: 00:a1 (LE)
+        ]
+        let oobData = Data(bytes)
+        let hexStr = bytes.map { String(format: "%02X", $0) }.joined(separator: " ")
+        appendLog(.info, "Testing NINearbyAccessoryConfiguration(data:) (\(oobData.count)B): \(hexStr)")
+
+        do {
+            let config = try NINearbyAccessoryConfiguration(data: oobData)
+            let session = NISession()
+            session.delegate = self
+            self.niSession = session
+            session.run(config)
+            isRunning = true
+            statusMessage = "Running Experimental OOB Hex..."
+            appendLog(.success, "NINearbyAccessoryConfiguration accepted payload! Running NISession...")
+        } catch {
+            let nsErr = error as NSError
+            statusMessage = "OOB Hex rejected: \(nsErr.localizedDescription)"
+            appendLog(.error, "NINearbyAccessoryConfiguration rejected payload [\(nsErr.domain):\(nsErr.code)]: \(nsErr.localizedDescription)")
+        }
+    }
+
     func stopSession() {
         if niSession != nil {
             niSession?.invalidate()

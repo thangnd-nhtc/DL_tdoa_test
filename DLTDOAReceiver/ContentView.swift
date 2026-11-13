@@ -161,6 +161,17 @@ struct ContentView: View {
                 .buttonStyle(.bordered)
                 .accessibilityLabel("Clear measurements")
             }
+
+            Button {
+                manager.startExperimentalOOBHexSession()
+            } label: {
+                Label("Test FiRa OOB Hex (Experimental)", systemImage: "wrench.and.screwdriver")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .tint(.orange)
+            .controlSize(.small)
+            .disabled(manager.isRunning)
         }
         .padding()
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
