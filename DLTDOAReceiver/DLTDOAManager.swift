@@ -189,7 +189,7 @@ final class DLTDOAManager: NSObject, ObservableObject {
         let r2Bytes: [UInt8] = [
             0x01, 0x00,                         // Major Version = 1
             0x00, 0x00,                         // Minor Version = 0
-            0x01,                               // Preferred Update Rate = 1 (UserInteractive)
+            0x14,                               // Preferred Update Rate = 20 (User Interactive per Release-R2 Table 3-3)
             0x00, 0x00, 0x00, 0x00, 0x00,       // RFU (10 bytes)
             0x00, 0x00, 0x00, 0x00, 0x00,
             0x21,                               // UWB Config Data Length = 33 bytes
