@@ -140,7 +140,7 @@
 
 /* Begin XCBuildConfiguration section */
 		A80000010000000000000001 /* Debug */ = {
-			isa = PBXBuildConfiguration;
+			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ENABLE_MODULES = YES;
@@ -160,7 +160,7 @@
 			name = Debug;
 		};
 		A80000010000000000000002 /* Release */ = {
-			isa = PBXBuildConfiguration;
+			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ENABLE_MODULES = YES;
@@ -176,7 +176,7 @@
 			name = Release;
 		};
 		A80000010000000000000003 /* Debug */ = {
-			isa = PBXBuildConfiguration;
+			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -200,7 +200,7 @@
 			name = Debug;
 		};
 		A80000010000000000000004 /* Release */ = {
-			isa = PBXBuildConfiguration;
+			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
