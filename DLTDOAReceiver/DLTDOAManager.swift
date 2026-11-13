@@ -2,12 +2,42 @@ import Foundation
 import Combine
 import CoreLocation
 import NearbyInteraction
+import UIKit
 
 enum DiscoveryChoice: String, CaseIterable, Identifiable {
     case bluetoothLowEnergy = "BLE (Default)"
     case wifi = "Wi-Fi (iOS 27+)"
 
     var id: String { rawValue }
+}
+
+enum LogLevel: String, CaseIterable {
+    case info = "INFO"
+    case success = "OK"
+    case packet = "PKT"
+    case warning = "WARN"
+    case error = "ERR"
+}
+
+struct LogEntry: Identifiable, Hashable {
+    let id = UUID()
+    let timestamp: Date
+    let level: LogLevel
+    let message: String
+
+    private static let formatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss.SSS"
+        return f
+    }()
+
+    var timeString: String {
+        Self.formatter.string(from: timestamp)
+    }
+
+    var formattedLine: String {
+        "[\(timeString)] [\(level.rawValue)] \(message)"
+    }
 }
 
 @MainActor
@@ -19,7 +49,8 @@ final class DLTDOAManager: NSObject, ObservableObject {
 
     @Published var isRunning: Bool = false
     @Published var statusMessage: String = "Idle"
-    @Published var logs: [String] = []
+    @Published var logs: [LogEntry] = []
+    @Published var logRawPackets: Bool = true
 
     @Published var networkIdentifierText: String = "42"
     @Published var discoveryChoice: DiscoveryChoice = .bluetoothLowEnergy
@@ -31,12 +62,14 @@ final class DLTDOAManager: NSObject, ObservableObject {
     private let locationManager = CLLocationManager()
     private var niSession: NISession?
     private var pendingStartAfterAuth = false
+    private var lastPacketLogTime: Date = .distantPast
 
     override init() {
         super.init()
         locationManager.delegate = self
         refreshCapabilities()
         updateLocationStatus(locationManager.authorizationStatus)
+        appendLog(.info, "App initialized. \(supportReason)")
     }
 
     func refreshCapabilities() {
@@ -53,14 +86,14 @@ final class DLTDOAManager: NSObject, ObservableObject {
     }
 
     func requestLocationPermission() {
-        appendLog("Requesting When-In-Use location authorization...")
+        appendLog(.info, "Requesting When-In-Use location authorization...")
         locationManager.requestWhenInUseAuthorization()
     }
 
     func startSession() {
         guard isSupported else {
             statusMessage = "DL-TDoA unsupported on this device/OS."
-            appendLog(statusMessage)
+            appendLog(.error, statusMessage)
             return
         }
 
@@ -74,13 +107,13 @@ final class DLTDOAManager: NSObject, ObservableObject {
 
         guard auth == .authorizedWhenInUse || auth == .authorizedAlways else {
             statusMessage = "Location authorization denied. Enable in Settings."
-            appendLog(statusMessage)
+            appendLog(.error, statusMessage)
             return
         }
 
         guard let netID = Int(networkIdentifierText.trimmingCharacters(in: .whitespacesAndNewlines)) else {
             statusMessage = "Invalid Network Identifier (must be integer, e.g. 42)"
-            appendLog(statusMessage)
+            appendLog(.error, statusMessage)
             return
         }
 
@@ -96,10 +129,10 @@ final class DLTDOAManager: NSObject, ObservableObject {
                 let method: NIDLTDOAConfiguration.DiscoveryMethod =
                     (discoveryChoice == .wifi) ? .wifi : .bluetoothLowEnergy
                 config = NIDLTDOAConfiguration(networkIdentifier: netID, discoveryMethod: method)
-                appendLog("Starting NISession with networkIdentifier=\(netID), discovery=\(discoveryChoice.rawValue)")
+                appendLog(.success, "Starting NISession (networkID=\(netID), discovery=\(discoveryChoice.rawValue))")
             } else {
                 config = NIDLTDOAConfiguration(networkIdentifier: netID)
-                appendLog("Starting NISession with networkIdentifier=\(netID) (default BLE discovery)")
+                appendLog(.success, "Starting NISession (networkID=\(netID), discovery=BLE default)")
             }
 
             session.run(config)
@@ -112,7 +145,7 @@ final class DLTDOAManager: NSObject, ObservableObject {
         if niSession != nil {
             niSession?.invalidate()
             niSession = nil
-            appendLog("NISession invalidated.")
+            appendLog(.warning, "NISession invalidated by user.")
         }
         isRunning = false
         if statusMessage.hasPrefix("Running") {
@@ -124,7 +157,17 @@ final class DLTDOAManager: NSObject, ObservableObject {
         observationsByAddress.removeAll()
         solvedPosition = nil
         totalMeasurementsReceived = 0
-        appendLog("Cleared measurements.")
+        appendLog(.info, "Cleared anchor measurements.")
+    }
+
+    func clearLogs() {
+        logs.removeAll()
+    }
+
+    func copyLogsToClipboard() {
+        let text = logs.map(\.formattedLine).joined(separator: "\n")
+        UIPasteboard.general.string = text
+        appendLog(.info, "Copied \(logs.count) log lines to clipboard.")
     }
 
     private func updateLocationStatus(_ status: CLAuthorizationStatus) {
@@ -150,13 +193,11 @@ final class DLTDOAManager: NSObject, ObservableObject {
         }
     }
 
-    private func appendLog(_ text: String) {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        let line = "[\(formatter.string(from: Date()))] \(text)"
-        logs.insert(line, at: 0)
-        if logs.count > 100 {
-            logs.removeLast(logs.count - 100)
+    private func appendLog(_ level: LogLevel, _ message: String) {
+        let entry = LogEntry(timestamp: Date(), level: level, message: message)
+        logs.insert(entry, at: 0)
+        if logs.count > 200 {
+            logs.removeLast(logs.count - 200)
         }
     }
 }
@@ -166,7 +207,8 @@ extension DLTDOAManager: CLLocationManagerDelegate {
         let status = manager.authorizationStatus
         Task { @MainActor in
             self.updateLocationStatus(status)
-            self.appendLog("Location authorization changed: \(self.locationStatusText)")
+            self.appendLog(self.isAuthorizedForLocation ? .success : .warning,
+                           "Location authorization: \(self.locationStatusText)")
             if self.pendingStartAfterAuth {
                 self.pendingStartAfterAuth = false
                 if self.isAuthorizedForLocation {
@@ -220,29 +262,39 @@ extension DLTDOAManager: NISessionDelegate {
             let allObs = Array(self.observationsByAddress.values)
             self.solvedPosition = DLTDOASolver.solve2D(observations: allObs)
             self.statusMessage = "Receiving DL-TDoA (\(allObs.count) anchors, \(self.totalMeasurementsReceived) msgs)"
+
+            if self.logRawPackets && now.timeIntervalSince(self.lastPacketLogTime) >= 0.5 {
+                self.lastPacketLogTime = now
+                let summary = parsed.map {
+                    String(format: "0x%04X(%@, %.1fdBm, dt=%.6fs)",
+                           $0.address, $0.measurementTypeDescription, $0.signalStrength, $0.elapsedTime)
+                }.joined(separator: " | ")
+                self.appendLog(.packet, "Rx \(parsed.count): \(summary)")
+            }
         }
     }
 
     nonisolated func session(_ session: NISession, didInvalidateWith error: Error) {
-        let message = error.localizedDescription
+        let nsErr = error as NSError
+        let message = "\(error.localizedDescription) [\(nsErr.domain):\(nsErr.code)]"
         Task { @MainActor in
             self.isRunning = false
             self.niSession = nil
-            self.statusMessage = "Session invalidated: \(message)"
-            self.appendLog("ERROR didInvalidateWith: \(message)")
+            self.statusMessage = "Session invalidated: \(error.localizedDescription)"
+            self.appendLog(.error, "didInvalidateWith: \(message)")
         }
     }
 
     nonisolated func sessionWasSuspended(_ session: NISession) {
         Task { @MainActor in
             self.statusMessage = "Session suspended"
-            self.appendLog("Session suspended.")
+            self.appendLog(.warning, "Session suspended by system.")
         }
     }
 
     nonisolated func sessionSuspensionEnded(_ session: NISession) {
         Task { @MainActor in
-            self.appendLog("Session suspension ended.")
+            self.appendLog(.info, "Session suspension ended.")
         }
     }
 }
