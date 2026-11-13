@@ -175,6 +175,65 @@ final class DLTDOAManager: NSObject, ObservableObject {
         }
     }
 
+    func startExperimentalTWRAccessorySession() {
+        let auth = locationManager.authorizationStatus
+        guard auth == .authorizedWhenInUse || auth == .authorizedAlways else {
+            statusMessage = "Location authorization required."
+            appendLog(.error, statusMessage)
+            return
+        }
+
+        stopSession()
+
+        // Apple NI Accessory Protocol Release R2 AccessoryConfigurationData (49 bytes total)
+        let r2Bytes: [UInt8] = [
+            0x01, 0x00,                         // Major Version = 1
+            0x00, 0x00,                         // Minor Version = 0
+            0x01,                               // Preferred Update Rate = 1 (UserInteractive)
+            0x00, 0x00, 0x00, 0x00, 0x00,       // RFU (10 bytes)
+            0x00, 0x00, 0x00, 0x00, 0x00,
+            0x21,                               // UWB Config Data Length = 33 bytes
+            // UWB Config Data (33 bytes)
+            0x01, 0x00,                         // uwb_spec_ver_major
+            0x01, 0x00,                         // uwb_spec_ver_minor
+            0x42, 0x01, 0x00, 0x00,             // manufacturer_id
+            0x01, 0x00, 0x00, 0x00,             // model_id
+            0x00, 0x00, 0x00, 0x00,             // mw_version
+            0x00,                               // ranging_role (0 = Responder)
+            0xA1, 0x00,                         // device_mac_address (00:a1)
+            0x19, 0x00,                         // clock_drift (25 ppm)
+            0x03,                               // supported_device_roles
+            0x02,                               // supported_ranging_methods (DS-TWR)
+            0x01,                               // supported_sts_config (Static STS)
+            0x03,                               // supported_multinode_modes
+            0x01,                               // supported_hopping_modes
+            0x01,                               // supported_tof_report
+            0x01,                               // supported_aoa_azimuth
+            0x01,                               // supported_aoa_elevation
+            0x01,                               // supported_aoa_fom
+            0x02,                               // supported_channel_number (Ch 9)
+            0x00,                               // supported_uwb_initiation_time
+            0x0A                                // supported_preamble_code_index (10)
+        ]
+        let configData = Data(r2Bytes)
+        appendLog(.info, "Testing Release-R2 TWR AccessoryConfigurationData (\(configData.count)B)...")
+
+        do {
+            let config = try NINearbyAccessoryConfiguration(data: configData)
+            let session = NISession()
+            session.delegate = self
+            self.niSession = session
+            session.run(config)
+            isRunning = true
+            statusMessage = "Running R2 TWR Config — listening for UWB..."
+            appendLog(.success, "NINearbyAccessoryConfiguration(R2) accepted! Listening for nearbyObjects / DLTDOA...")
+        } catch {
+            let nsErr = error as NSError
+            statusMessage = "R2 Config rejected: \(nsErr.localizedDescription)"
+            appendLog(.error, "NINearbyAccessoryConfiguration(R2) rejected [\(nsErr.domain):\(nsErr.code)]: \(nsErr.localizedDescription)")
+        }
+    }
+
     func stopSession() {
         if niSession != nil {
             niSession?.invalidate()
@@ -300,6 +359,23 @@ extension DLTDOAManager: NISessionDelegate {
                 }.joined(separator: " | ")
                 self.appendLog(.packet, "Rx \(parsed.count): \(summary)")
             }
+        }
+    }
+
+    nonisolated func session(_ session: NISession, didUpdate nearbyObjects: [NINearbyObject]) {
+        let summary = nearbyObjects.map { obj in
+            let dist = obj.distance.map { String(format: "%.2fm", $0) } ?? "nil"
+            return "dist=\(dist)"
+        }.joined(separator: ", ")
+        Task { @MainActor in
+            self.appendLog(.packet, "didUpdate nearbyObjects (\(nearbyObjects.count)): \(summary)")
+        }
+    }
+
+    nonisolated func session(_ session: NISession, didGenerateShareableConfigurationData shareableConfigurationData: Data, for object: NINearbyObject) {
+        let hex = shareableConfigurationData.map { String(format: "%02X", $0) }.joined(separator: " ")
+        Task { @MainActor in
+            self.appendLog(.info, "Generated shareableConfigData (\(shareableConfigurationData.count)B): \(hex)")
         }
     }
 

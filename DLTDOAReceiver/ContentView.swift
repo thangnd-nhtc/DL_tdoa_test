@@ -162,16 +162,29 @@ struct ContentView: View {
                 .accessibilityLabel("Clear measurements")
             }
 
-            Button {
-                manager.startExperimentalOOBHexSession()
-            } label: {
-                Label("Test FiRa OOB Hex (Experimental)", systemImage: "wrench.and.screwdriver")
-                    .frame(maxWidth: .infinity)
+            HStack(spacing: 8) {
+                Button {
+                    manager.startExperimentalOOBHexSession()
+                } label: {
+                    Label("Test FiRa OOB", systemImage: "wrench.and.screwdriver")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .tint(.orange)
+                .controlSize(.small)
+                .disabled(manager.isRunning)
+
+                Button {
+                    manager.startExperimentalTWRAccessorySession()
+                } label: {
+                    Label("Test R2 TWR", systemImage: "antenna.radiowaves.left.and.right")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .tint(.purple)
+                .controlSize(.small)
+                .disabled(manager.isRunning)
             }
-            .buttonStyle(.bordered)
-            .tint(.orange)
-            .controlSize(.small)
-            .disabled(manager.isRunning)
         }
         .padding()
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
