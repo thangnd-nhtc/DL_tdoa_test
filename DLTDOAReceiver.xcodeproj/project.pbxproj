@@ -227,7 +227,7 @@
 
 /* Begin XCConfigurationList section */
 		A70000010000000000000001 /* Build configuration list for PBXProject "DLTDOAReceiver" */ = {
-			isa = PBXConfigurationList;
+			isa = XCConfigurationList;
 			buildConfigurations = (
 				A80000010000000000000001 /* Debug */,
 				A80000010000000000000002 /* Release */,
@@ -236,7 +236,7 @@
 			defaultConfigurationName = Release;
 		};
 		A70000010000000000000002 /* Build configuration list for PBXNativeTarget "DLTDOAReceiver" */ = {
-			isa = PBXConfigurationList;
+			isa = XCConfigurationList;
 			buildConfigurations = (
 				A80000010000000000000003 /* Debug */,
 				A80000010000000000000004 /* Release */,
