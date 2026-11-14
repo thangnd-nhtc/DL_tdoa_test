@@ -10,6 +10,7 @@ enum LogFilter: String, CaseIterable, Identifiable {
 
 struct ContentView: View {
     @StateObject private var manager = DLTDOAManager()
+
     @State private var logFilter: LogFilter = .all
 
     private var filteredLogs: [LogEntry] {
@@ -43,7 +44,7 @@ struct ContentView: View {
                         Circle()
                             .fill(manager.isRunning ? Color.green : Color.gray.opacity(0.5))
                             .frame(width: 9, height: 9)
-                        Text(manager.isRunning ? "LIVE" : "IDLE")
+                        Text(manager.isRunning ? "SESSION" : "IDLE")
                             .font(.caption.bold().monospaced())
                             .foregroundStyle(manager.isRunning ? .green : .secondary)
                     }
@@ -162,29 +163,7 @@ struct ContentView: View {
                 .accessibilityLabel("Clear measurements")
             }
 
-            HStack(spacing: 8) {
-                Button {
-                    manager.startExperimentalOOBHexSession()
-                } label: {
-                    Label("Test FiRa OOB", systemImage: "wrench.and.screwdriver")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .tint(.orange)
-                .controlSize(.small)
-                .disabled(manager.isRunning)
 
-                Button {
-                    manager.startExperimentalTWRAccessorySession()
-                } label: {
-                    Label("Test R2 TWR", systemImage: "antenna.radiowaves.left.and.right")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .tint(.purple)
-                .controlSize(.small)
-                .disabled(manager.isRunning)
-            }
         }
         .padding()
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
