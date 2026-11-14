@@ -1,4 +1,4 @@
-﻿"""QANI handshake core and real-backend JSON-lines adapter (no BLE transport yet).
+﻿"""QANI handshake, Windows NUS BLE peripheral, and real-backend JSON-lines adapter.
 
 Never synthesizes NI accessory configuration or maps NI data to FiRa parameters.
 """
@@ -34,12 +34,18 @@ class JsonLinesBackend:
 
     async def __aexit__(self, *args):
         if self.process is not None:
-            self.process.stdin.close()
-            await self.process.stdin.wait_closed()
+            try:
+                self.process.stdin.close()
+                await asyncio.wait_for(self.process.stdin.wait_closed(), 2)
+            except (BrokenPipeError, ConnectionResetError, asyncio.TimeoutError):
+                pass
             if self.process.returncode is None:
                 self.process.terminate()
-            await self.process.wait()
-            await self.process.stdout.read()
+            try:
+                await asyncio.wait_for(self.process.wait(), 3)
+            except asyncio.TimeoutError:
+                self.process.kill()
+                await self.process.wait()
 
     async def request(self, operation, payload=b""):
         async with self.lock:
@@ -129,9 +135,20 @@ async def run_stdio(command, timeout):
             await handshake.receive(b"\x0c")
 
 
+async def run_selected(args):
+    if args.stdio:
+        await run_stdio(args.backend_command, args.timeout)
+    else:
+        from qani_winrt import advertise
+        async with JsonLinesBackend(args.backend_command, args.timeout) as backend:
+            await advertise(backend)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--stdio", action="store_true", required=True,
+    modes = parser.add_mutually_exclusive_group(required=True)
+    modes.add_argument("--advertise", action="store_true", help="Windows WinRT NUS BLE peripheral")
+    modes.add_argument("--stdio", action="store_true",
                         help="Diagnostic hex-line transport, NOT Bluetooth")
     parser.add_argument("--timeout", type=float, default=10)
     parser.add_argument("--backend-command", nargs=argparse.REMAINDER, required=True,
@@ -139,7 +156,12 @@ def main():
     args = parser.parse_args()
     if args.timeout <= 0 or not args.backend_command:
         parser.error("positive timeout and nonempty backend command required")
-    asyncio.run(run_stdio(args.backend_command, args.timeout))
+    try:
+        asyncio.run(run_selected(args))
+    except KeyboardInterrupt:
+        pass
+    except Exception as exc:
+        parser.exit(1, "Bridge failed: " + str(exc) + "\n")
 
 
 if __name__ == "__main__":

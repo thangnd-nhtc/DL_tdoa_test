@@ -229,6 +229,8 @@ struct ContentView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("NI: \(manager.niState)")
+                Text("Session: \(manager.sessionAuditIdentity)")
+                Text("Lifetime entries: raw \(manager.rawDelegateEntryCount) | accepted \(manager.acceptedDelegateEntryCount) | stale \(manager.rejectedDelegateEntryCount)")
                 Text("Callbacks: \(manager.callbackCount) | Empty: \(manager.emptyCallbackCount) | Measurements: \(manager.totalMeasurementsReceived)")
                 Text(manager.receiveStatus)
                 Text("Solver: \(manager.solverState)")

@@ -1,9 +1,21 @@
-﻿# QANI handshake/backend integration scaffold
+﻿# QANI Windows BLE bridge
 
-**Not an operational BLE peripheral. Not an Apple NI firmware implementation.**
-`qani_ble_bridge.py` implements the handshake state machine and a subprocess
-backend adapter. Its only runnable transport is explicitly diagnostic stdin/stdout.
-No radio or hardware access is performed by this scaffold itself.
+`qani_ble_bridge.py --advertise` now creates a real Windows WinRT GATT peripheral,
+using Nordic UART service `6E400001-B5A3-F393-E0A9-E50E24DCCA9E`, RX `...0002`
+(Write with response) and TX `...0003` (Notify). It is not an Apple NI firmware
+implementation and does not provide or impersonate the NI security profile.
+
+From `Samples/Python/UWB-Qorvo-Tools`:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\fira\run_fira_dt\qani_ble_bridge.py --advertise --backend-command C:\path\to\real_backend.exe
+```
+
+**A real NI-capable backend is still missing from this repository.** Replace the
+placeholder with an actual executable implementing the contract below. Omitting
+it is a CLI error. There is no synthetic configuration fallback. Windows Bluetooth
+adapter peripheral support and permissions are required; creation/advertising
+failures are reported. No advertising or hardware test was performed during development.
 
 ## Real backend required
 
@@ -47,27 +59,28 @@ The backend must stop ranging on pipe EOF/process exit and have its own hardware
 watchdog: the host cannot guarantee cleanup after a crash or transport failure.
 Payloads are capped at 65536 bytes; this cap is not a BLE MTU.
 
-## BLE transport blocker / remaining integration
+## BLE transport behavior
 
-The supplied Windows venv has WinRT 3.2.1 GATT-provider bindings; importing
-`GattServiceProvider` succeeds. This verifies API availability only, not local
-adapter peripheral support, OS permissions, advertising, or client interoperability.
-No GATT service is created by this scaffold and no hardware was exercised.
+The central must subscribe before sending `0a`. One subscribed central owns the
+session; other centrals cannot write to that session. WinRT event deferrals cover
+asynchronous handling; writes and subscription-loss cleanup are serialized.
+Every request must have offset zero and contain a complete QANI message. Every
+response is one notification: oversized replies are rejected, never fragmented
+with an invented protocol. Negotiate enough ATT MTU for accessory configuration
+before initialization. NUS is only a data transport, not proof of NI compatibility.
 
-A production transport still needs verified Qorvo service/RX/TX UUIDs and profile,
-client subscription before initialization replies, OS error/status handling,
-per-connection ownership, actual MTU-aware delivery/reassembly per the agreed
-profile (never arbitrarily chunk opaque NI bytes), serialized writes, unsubscribe
-and disconnect stop, and deterministic cleanup. Do not advertise a fabricated
-security characteristic or claim an unsecured custom GATT service implements the
-Apple Nearby Interaction accessory security profile.
+Unsubscribe/disconnect ends the bridge session and stops an acknowledged active
+backend session. Notification/backend errors end advertising and close the backend.
+Ctrl+C also stops advertising, removes event handlers, stops known active ranging,
+and terminates the persistent backend. Uncertain/faulted hardware state requires
+the backend's EOF/exit watchdog; no host can guarantee cleanup after a crash.
 
 ## Tests (no hardware, fake backend only)
 
 From this directory, using the repository venv Python:
 
 ```powershell
-..\..\..\..\.venv\Scripts\python.exe -m unittest -v test_qani_ble_bridge.py
+..\..\..\.venv\Scripts\python.exe -m unittest -v test_qani_ble_bridge.py
 ```
 
 The test marker bytes `TEST` / `TEST-ONLY` are intentionally invalid as NI

@@ -67,5 +67,54 @@ class HandshakeTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(backend.failed)
 
 
+
+
+class WinrtTransportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_subscription_gate_and_deferral(self):
+        from types import SimpleNamespace as NS
+        from qani_winrt import WindowsNusPeripheral
+        backend = FakeBackend()
+        peripheral = WindowsNusPeripheral(backend, NS())
+        peripheral.tx = NS(subscribed_clients=[])
+        class Request:
+            offset = 0
+            value = b'\x0a'
+            error = None
+            def respond_with_protocol_error(self, error): self.error = error
+        request = Request()
+        class Args:
+            session = NS(device_id=NS(id='central'), add_session_status_changed=lambda handler: 1, remove_session_status_changed=lambda token: None)
+            async def get_request_async(self): return request
+        class Deferral:
+            completed = False
+            def complete(self): self.completed = True
+        deferral = Deferral()
+        await peripheral.write(Args(), deferral)
+        self.assertTrue(deferral.completed)
+        self.assertEqual(request.error, 0x0E)
+        self.assertEqual(backend.calls, [])
+
+    async def test_oversize_is_not_fragmented_and_stops(self):
+        from types import SimpleNamespace as NS
+        from qani_winrt import WindowsNusPeripheral
+        backend = FakeBackend()
+        peripheral = WindowsNusPeripheral(backend, NS())
+        session = NS(device_id=NS(id='central'), add_session_status_changed=lambda handler: 1, remove_session_status_changed=lambda token: None)
+        peripheral.tx = NS(subscribed_clients=[NS(session=session, max_notification_size=2)])
+        class Request:
+            offset = 0
+            value = b'\x0a'
+            def respond_with_protocol_error(self, error): pass
+        class Args:
+            async def get_request_async(self): return Request()
+        args = Args()
+        args.session = session
+        class Deferral:
+            def complete(self): pass
+        await peripheral.write(args, Deferral())
+        self.assertTrue(peripheral.done.is_set())
+        await peripheral.close()
+        self.assertEqual(backend.calls[-1], ('stop', b''))
+
 if __name__ == "__main__":
     unittest.main()

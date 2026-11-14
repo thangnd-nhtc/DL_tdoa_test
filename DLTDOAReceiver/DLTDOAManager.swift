@@ -3,6 +3,29 @@ import Combine
 import CoreLocation
 import NearbyInteraction
 import UIKit
+import OSLog
+
+// All shared mutable audit state is protected by this lock.
+private final class CallbackAudit: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries = 0
+    private var identities: [ObjectIdentifier: String] = [:]
+    func attach(_ session: NISession) -> String {
+        lock.lock(); defer { lock.unlock() }
+        let id = UUID().uuidString
+        identities[ObjectIdentifier(session)] = id
+        return id
+    }
+    func enter(_ session: NISession) -> (count: Int, identity: String) {
+        lock.lock(); defer { lock.unlock() }
+        entries += 1
+        return (entries, identities[ObjectIdentifier(session)] ?? "unregistered")
+    }
+    func count() -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return entries
+    }
+}
 
 enum LogLevel: String, CaseIterable {
     case info = "INFO"
@@ -51,6 +74,14 @@ final class DLTDOAManager: NSObject, ObservableObject {
     @Published var solvedPosition: SolvedPosition?
     @Published var totalMeasurementsReceived: Int = 0
 
+    // Lifetime totals: Clear Measurements does not reset callback-path evidence.
+    @Published var rawDelegateEntryCount = 0
+    @Published var acceptedDelegateEntryCount = 0
+    @Published var rejectedDelegateEntryCount = 0
+    @Published var sessionAuditIdentity = "none"
+    nonisolated private let callbackAudit = CallbackAudit()
+    nonisolated private let auditLogger = Logger(subsystem: "DLTDOAReceiver", category: "CallbackAudit")
+    private let niDelegateQueue = DispatchQueue(label: "DLTDOAReceiver.NISessionDelegate")
     @Published var callbackCount = 0
     @Published var emptyCallbackCount = 0
     @Published var niState = "Idle"
@@ -74,6 +105,7 @@ final class DLTDOAManager: NSObject, ObservableObject {
     }
 
     @objc private func applicationLifecycleChanged(_ notification: Notification) {
+        auditLogger.notice("application lifecycle session=\(self.sessionAuditIdentity, privacy: .public) event=\(notification.name.rawValue, privacy: .public) state=\(self.applicationStateText, privacy: .public)")
         appendLog(.info, "Lifecycle: \(notification.name.rawValue), state=\(applicationStateText)")
     }
 
@@ -146,7 +178,12 @@ final class DLTDOAManager: NSObject, ObservableObject {
 
         if #available(iOS 26.0, *) {
             let session = NISession()
+            sessionAuditIdentity = callbackAudit.attach(session)
+            session.delegateQueue = niDelegateQueue
             session.delegate = self
+            let attached = session.delegate === self
+            auditLogger.notice("attach session=\(self.sessionAuditIdentity, privacy: .public) delegateMatches=\(attached) queue=DLTDOAReceiver.NISessionDelegate")
+            appendLog(.info, "Audit attach session=\(sessionAuditIdentity), delegateMatches=\(attached), explicit serial queue")
             self.niSession = session
 
             let config: NIDLTDOAConfiguration
@@ -167,6 +204,7 @@ final class DLTDOAManager: NSObject, ObservableObject {
                 while !Task.isCancelled {
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
                     guard !Task.isCancelled, let self else { return }
+                    self.rawDelegateEntryCount = self.callbackAudit.count()
                     let elapsed = self.sessionStartedAt.map { ProcessInfo.processInfo.systemUptime - $0 } ?? 0
                     if let last = self.lastCallbackAt {
                         self.receiveStatus = String(format: "Last callback %.0f s ago", Date().timeIntervalSince(last))
@@ -178,7 +216,9 @@ final class DLTDOAManager: NSObject, ObservableObject {
                     }
                 }
             }
+            auditLogger.notice("run requested session=\(self.sessionAuditIdentity, privacy: .public)")
             session.run(config)
+            auditLogger.notice("run returned session=\(self.sessionAuditIdentity, privacy: .public); not proof of reception")
             isRunning = true
             statusMessage = "Session requested (Network ID: \(netID)) - waiting for DL-TDoA measurements"
         }
@@ -190,6 +230,8 @@ final class DLTDOAManager: NSObject, ObservableObject {
         pendingStartAfterAuth = false
         niState = "Stopped"
         if niSession != nil {
+            auditLogger.notice("invalidate requested session=\(self.sessionAuditIdentity, privacy: .public)")
+            appendLog(.warning, "Audit invalidate requested session=\(sessionAuditIdentity)")
             niSession?.invalidate()
             niSession = nil
             appendLog(.warning, "NISession invalidated by user.")
@@ -277,6 +319,9 @@ extension DLTDOAManager: CLLocationManagerDelegate {
 extension DLTDOAManager: NISessionDelegate {
     @available(iOS 26.0, *)
     nonisolated func session(_ session: NISession, didUpdateDLTDOA measurements: [NIDLTDOAMeasurement]) {
+        // FIRST: instrument before parsing, Task hop, filtering, or UI toggles.
+        let audit = callbackAudit.enter(session)
+        auditLogger.notice("raw didUpdateDLTDOA entry=\(audit.count) session=\(audit.identity, privacy: .public) measurements=\(measurements.count) mainThread=\(Thread.isMainThread)")
         let now = Date()
         let parsed: [AnchorObservation] = measurements.map { m in
             let typeDesc: String
@@ -303,7 +348,15 @@ extension DLTDOAManager: NISessionDelegate {
         }
 
         Task { @MainActor in
-            guard self.niSession === session else { return }
+            self.rawDelegateEntryCount = self.callbackAudit.count()
+            guard self.niSession === session else {
+                self.rejectedDelegateEntryCount += 1
+                self.auditLogger.notice("rejected stale callback session=\(audit.identity, privacy: .public)")
+                self.appendLog(.warning, "Rejected previous-session callback \(audit.identity)")
+                return
+            }
+            self.acceptedDelegateEntryCount += 1
+            self.auditLogger.notice("accepted callback session=\(audit.identity, privacy: .public)")
             self.callbackCount += 1
             self.lastCallbackAt = now
             self.niState = "Callback received"
@@ -333,6 +386,7 @@ extension DLTDOAManager: NISessionDelegate {
     }
 
     nonisolated func session(_ session: NISession, didInvalidateWith error: Error) {
+        auditLogger.notice("delegate didInvalidateWith entered code=\((error as NSError).code)")
         let nsErr = error as NSError
         let message = "\(error.localizedDescription) [\(nsErr.domain):\(nsErr.code)]"
         Task { @MainActor in
