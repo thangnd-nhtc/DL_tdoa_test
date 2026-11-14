@@ -38,6 +38,7 @@ struct ContentView: View {
             }
             .background(Color(.systemGroupedBackground))
             .navigationTitle("DL-TDoA Receiver")
+            .onDisappear { manager.stopSession() }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 6) {

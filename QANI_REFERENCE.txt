@@ -1,0 +1,11 @@
+Verified raw source 2026-11-14:
+https://raw.githubusercontent.com/VirtuosoEric/Qorvo_Nearby_Interaction/HEAD/QorvoAccessorySample/BluetoothSupport/BluetoothLECentral.swift
+QorvoNIService:
+service 2E938FD0-6A61-11ED-A1EB-0242AC120002
+security 2E93941C-6A61-11ED-A1EB-0242AC120002
+RX 2E93998A-6A61-11ED-A1EB-0242AC120002
+TX 2E939AF2-6A61-11ED-A1EB-0242AC120002
+NUS service 6E400001-B5A3-F393-E0A9-E50E24DCCA9E RX002 TX003.
+Handshake reference:
+https://github.com/VirtuosoEric/Qorvo_Nearby_Interaction/blob/HEAD/QorvoAccessorySample/QorvoDemoViewController.swift
+https://github.com/save-the-world-org/beacon-firmware/blob/HEAD/docs/qani.md

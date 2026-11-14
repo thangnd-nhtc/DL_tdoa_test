@@ -1,10 +1,12 @@
-<?xml version="1.0" encoding="UTF-8"?>
+﻿<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Bluetooth connects to a selected Qorvo Nearby Interaction accessory and exchanges UWB session configuration.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Location access is required by Apple Nearby Interaction to receive UWB DL-TDoA anchor measurements.</string>
 	<key>NSNearbyInteractionUsageDescription</key>
-	<string>Nearby Interaction is used to receive UWB DL-TDoA signals from anchors for indoor positioning.</string>
+	<string>Nearby Interaction receives UWB DL-TDoA signals and ranges to compatible Qorvo UWB accessories.</string>
 </dict>
 </plist>
