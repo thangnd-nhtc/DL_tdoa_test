@@ -119,7 +119,7 @@ final class DLTDOAManager: NSObject, ObservableObject {
 
             let config: NIDLTDOAConfiguration
             if #available(iOS 27.0, *) {
-                config = NIDLTDOAConfiguration(networkIdentifier: netID, discoveryMethod: .bluetoothLowEnergy)
+                config = NIDLTDOAConfiguration(networkIdentifier: netID)
                 appendLog(.info, "iOS 27+: DL-TDoA requires no entitlement (Apple documentation).")
             } else {
                 config = NIDLTDOAConfiguration(networkIdentifier: netID)
