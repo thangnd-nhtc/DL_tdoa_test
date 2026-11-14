@@ -54,10 +54,34 @@ final class DLTDOAManager: NSObject, ObservableObject {
     private let locationManager = CLLocationManager()
     private var niSession: NISession?
     private var pendingStartAfterAuth = false
+    private var sessionStartedAt: TimeInterval?
+
+    private var applicationStateText: String {
+        switch UIApplication.shared.applicationState {
+        case .active: return "active"
+        case .inactive: return "inactive"
+        case .background: return "background"
+        @unknown default: return "unknown"
+        }
+    }
+
+    @objc private func applicationLifecycleChanged(_ notification: Notification) {
+        appendLog(.info, "Lifecycle: \(notification.name.rawValue), state=\(applicationStateText)")
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
     private var lastPacketLogTime: Date = .distantPast
 
     override init() {
         super.init()
+        for name in [UIApplication.didBecomeActiveNotification,
+                     UIApplication.willResignActiveNotification,
+                     UIApplication.didEnterBackgroundNotification,
+                     UIApplication.willEnterForegroundNotification] {
+            NotificationCenter.default.addObserver(self, selector: #selector(applicationLifecycleChanged(_:)), name: name, object: nil)
+        }
         locationManager.delegate = self
         refreshCapabilities()
         updateLocationStatus(locationManager.authorizationStatus)
@@ -127,6 +151,8 @@ final class DLTDOAManager: NSObject, ObservableObject {
             }
             appendLog(.info, "Requesting DL-TDoA NISession (networkID=\(netID), discovery=BLE)")
 
+            appendLog(.info, "Before run: appState=\(applicationStateText), location=\(locationStatusText)")
+            sessionStartedAt = ProcessInfo.processInfo.systemUptime
             session.run(config)
             isRunning = true
             statusMessage = "Session requested (Network ID: \(netID)) - waiting for DL-TDoA measurements"
@@ -265,6 +291,13 @@ extension DLTDOAManager: NISessionDelegate {
         let nsErr = error as NSError
         let message = "\(error.localizedDescription) [\(nsErr.domain):\(nsErr.code)]"
         Task { @MainActor in
+            guard self.niSession === session else {
+                self.appendLog(.info, "Ignored invalidation from previous session: \(message)")
+                return
+            }
+            let elapsed = self.sessionStartedAt.map { ProcessInfo.processInfo.systemUptime - $0 } ?? 0
+            self.appendLog(.error, "Invalidation context: appState=\(self.applicationStateText), elapsed=\(String(format: "%.3f", elapsed))s, userInfo=\(nsErr.userInfo)")
+            self.sessionStartedAt = nil
             self.isRunning = false
             self.niSession = nil
             self.statusMessage = "Session invalidated: \(error.localizedDescription)"
@@ -281,8 +314,8 @@ extension DLTDOAManager: NISessionDelegate {
 
     nonisolated func sessionSuspensionEnded(_ session: NISession) {
         Task { @MainActor in
-            self.appendLog(.info, "Session suspension ended; restarting DL-TDoA with location authorization check.")
-            self.startSession()
+            guard self.niSession === session else { return }
+            self.appendLog(.info, "Session suspension ended; appState=\(self.applicationStateText). No automatic restart during diagnostics.")
         }
     }
 }
