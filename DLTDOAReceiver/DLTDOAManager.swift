@@ -62,6 +62,7 @@ final class DLTDOAManager: NSObject, ObservableObject {
         refreshCapabilities()
         updateLocationStatus(locationManager.authorizationStatus)
         appendLog(.info, "App initialized. \(supportReason)")
+        appendLog(.info, "OS: \(UIDevice.current.systemVersion)")
     }
 
     func refreshCapabilities() {
@@ -116,12 +117,19 @@ final class DLTDOAManager: NSObject, ObservableObject {
             session.delegate = self
             self.niSession = session
 
-            let config = NIDLTDOAConfiguration(networkIdentifier: netID)
+            let config: NIDLTDOAConfiguration
+            if #available(iOS 27.0, *) {
+                config = NIDLTDOAConfiguration(networkIdentifier: netID, discoveryMethod: .bluetoothLowEnergy)
+                appendLog(.info, "iOS 27+: DL-TDoA requires no entitlement (Apple documentation).")
+            } else {
+                config = NIDLTDOAConfiguration(networkIdentifier: netID)
+                appendLog(.warning, "iOS 26: verify Apple DL-TDoA entitlement; BLE discovery is the default.")
+            }
             appendLog(.info, "Requesting DL-TDoA NISession (networkID=\(netID), discovery=BLE)")
 
             session.run(config)
             isRunning = true
-            statusMessage = "Session requested (Network ID: \(netID)) â€” scanning for anchors..."
+            statusMessage = "Session requested (Network ID: \(netID)) - waiting for DL-TDoA measurements"
         }
     }
 
@@ -132,7 +140,7 @@ final class DLTDOAManager: NSObject, ObservableObject {
             appendLog(.warning, "NISession invalidated by user.")
         }
         isRunning = false
-        if statusMessage.hasPrefix("Running") {
+        if statusMessage.hasPrefix("Running") || statusMessage.hasPrefix("Session requested") {
             statusMessage = "Stopped"
         }
     }
@@ -273,7 +281,8 @@ extension DLTDOAManager: NISessionDelegate {
 
     nonisolated func sessionSuspensionEnded(_ session: NISession) {
         Task { @MainActor in
-            self.appendLog(.info, "Session suspension ended.")
+            self.appendLog(.info, "Session suspension ended; restarting DL-TDoA with location authorization check.")
+            self.startSession()
         }
     }
 }

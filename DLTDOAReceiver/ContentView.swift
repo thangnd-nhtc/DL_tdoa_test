@@ -130,7 +130,7 @@ struct ContentView: View {
                 Text("Discovery")
                     .font(.subheadline)
                 Spacer()
-                Text("BLE (iOS 26)")
+                Text("Bluetooth Low Energy")
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
             }
