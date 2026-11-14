@@ -226,6 +226,15 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
             }
 
+            VStack(alignment: .leading, spacing: 4) {
+                Text("NI: \(manager.niState)")
+                Text("Callbacks: \(manager.callbackCount) | Empty: \(manager.emptyCallbackCount) | Measurements: \(manager.totalMeasurementsReceived)")
+                Text(manager.receiveStatus)
+                Text("Solver: \(manager.solverState)")
+            }
+            .font(.caption.monospaced())
+            .foregroundStyle(.secondary)
+
             if sorted.isEmpty {
                 Text("No DL-TDoA measurements received yet.")
                     .font(.subheadline)

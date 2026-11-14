@@ -51,6 +51,14 @@ final class DLTDOAManager: NSObject, ObservableObject {
     @Published var solvedPosition: SolvedPosition?
     @Published var totalMeasurementsReceived: Int = 0
 
+    @Published var callbackCount = 0
+    @Published var emptyCallbackCount = 0
+    @Published var niState = "Idle"
+    @Published var solverState = "Waiting for measurements"
+    @Published var receiveStatus = "No callback yet"
+    private var watchdog: Task<Void, Never>?
+    private var lastCallbackAt: Date?
+
     private let locationManager = CLLocationManager()
     private var niSession: NISession?
     private var pendingStartAfterAuth = false
@@ -153,6 +161,23 @@ final class DLTDOAManager: NSObject, ObservableObject {
 
             appendLog(.info, "Before run: appState=\(applicationStateText), location=\(locationStatusText)")
             sessionStartedAt = ProcessInfo.processInfo.systemUptime
+            clearMeasurements()
+            niState = "Requested (not proof of UWB reception)"
+            watchdog = Task { @MainActor [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    guard !Task.isCancelled, let self else { return }
+                    let elapsed = self.sessionStartedAt.map { ProcessInfo.processInfo.systemUptime - $0 } ?? 0
+                    if let last = self.lastCallbackAt {
+                        self.receiveStatus = String(format: "Last callback %.0f s ago", Date().timeIntervalSince(last))
+                    } else {
+                        self.receiveStatus = String(format: "Waiting %.0f s; no NI callback", elapsed)
+                        if Int(elapsed) == 10 {
+                            self.appendLog(.warning, "10 s without didUpdateDLTDOA: solver has not received data. Check NI/UWB discovery and synchronization.")
+                        }
+                    }
+                }
+            }
             session.run(config)
             isRunning = true
             statusMessage = "Session requested (Network ID: \(netID)) - waiting for DL-TDoA measurements"
@@ -160,6 +185,10 @@ final class DLTDOAManager: NSObject, ObservableObject {
     }
 
     func stopSession() {
+        watchdog?.cancel()
+        watchdog = nil
+        pendingStartAfterAuth = false
+        niState = "Stopped"
         if niSession != nil {
             niSession?.invalidate()
             niSession = nil
@@ -175,6 +204,12 @@ final class DLTDOAManager: NSObject, ObservableObject {
         observationsByAddress.removeAll()
         solvedPosition = nil
         totalMeasurementsReceived = 0
+        callbackCount = 0
+        emptyCallbackCount = 0
+        lastCallbackAt = nil
+        lastPacketLogTime = .distantPast
+        receiveStatus = "No callback yet"
+        solverState = "Waiting for measurements"
         appendLog(.info, "Cleared anchor measurements.")
     }
 
@@ -268,12 +303,22 @@ extension DLTDOAManager: NISessionDelegate {
         }
 
         Task { @MainActor in
+            guard self.niSession === session else { return }
+            self.callbackCount += 1
+            self.lastCallbackAt = now
+            self.niState = "Callback received"
+            self.receiveStatus = "Callback: \(parsed.count) measurements"
+            if parsed.isEmpty { self.emptyCallbackCount += 1 }
+            self.appendLog(.info, "didUpdateDLTDOA #\(self.callbackCount): count=\(parsed.count)")
             self.totalMeasurementsReceived += parsed.count
             for obs in parsed {
                 self.observationsByAddress[obs.address] = obs
             }
             let allObs = Array(self.observationsByAddress.values)
             self.solvedPosition = DLTDOASolver.solve2D(observations: allObs)
+            self.solverState = self.solvedPosition == nil
+                ? "No solution (\(allObs.count) anchors); raw measurements retained"
+                : "Position solved"
             self.statusMessage = "Receiving DL-TDoA (\(allObs.count) anchors, \(self.totalMeasurementsReceived) msgs)"
 
             if self.logRawPackets && now.timeIntervalSince(self.lastPacketLogTime) >= 0.5 {
@@ -297,6 +342,9 @@ extension DLTDOAManager: NISessionDelegate {
             }
             let elapsed = self.sessionStartedAt.map { ProcessInfo.processInfo.systemUptime - $0 } ?? 0
             self.appendLog(.error, "Invalidation context: appState=\(self.applicationStateText), elapsed=\(String(format: "%.3f", elapsed))s, userInfo=\(nsErr.userInfo)")
+            self.watchdog?.cancel()
+            self.watchdog = nil
+            self.niState = "Invalidated: \(message)"
             self.sessionStartedAt = nil
             self.isRunning = false
             self.niSession = nil
@@ -307,6 +355,8 @@ extension DLTDOAManager: NISessionDelegate {
 
     nonisolated func sessionWasSuspended(_ session: NISession) {
         Task { @MainActor in
+            guard self.niSession === session else { return }
+            self.niState = "Suspended"
             self.statusMessage = "Session suspended"
             self.appendLog(.warning, "Session suspended by system.")
         }
@@ -315,6 +365,7 @@ extension DLTDOAManager: NISessionDelegate {
     nonisolated func sessionSuspensionEnded(_ session: NISession) {
         Task { @MainActor in
             guard self.niSession === session else { return }
+            self.niState = "Suspension ended (no automatic restart)"
             self.appendLog(.info, "Session suspension ended; appState=\(self.applicationStateText). No automatic restart during diagnostics.")
         }
     }
