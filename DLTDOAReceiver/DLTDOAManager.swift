@@ -63,6 +63,12 @@ final class DLTDOAManager: NSObject, ObservableObject {
     @Published var locationStatusText: String = "Unknown"
     @Published var isAuthorizedForLocation: Bool = false
 
+    // Requested is not proof of receiving. Suspended sessions remain stoppable.
+    @Published private(set) var sessionRequested = false
+    @Published private(set) var lifecycleState = "Idle"
+    private var suspended = false
+    private var pendingResume = false
+    private var configuredNetworkID: Int?
     @Published var isRunning: Bool = false
     @Published var statusMessage: String = "Idle"
     @Published var logs: [LogEntry] = []
@@ -84,7 +90,7 @@ final class DLTDOAManager: NSObject, ObservableObject {
             "Session: \(sessionAuditIdentity); run network ID: \(runNetworkID); configured network ID: \(networkIdentifierText)",
             "Device: \(UIDevice.current.model); OS: \(UIDevice.current.systemVersion)",
             "DL-TDoA supported: \(isSupported); \(supportReason)",
-            "App: \(applicationStateText); location: \(locationStatusText); running: \(isRunning)",
+            "App: \(applicationStateText); location: \(locationStatusText); running: \(isRunning); lifecycle: \(lifecycleState); requested: \(sessionRequested); pendingResume: \(pendingResume)",
             "NI: \(niState); receive: \(receiveStatus); solver: \(solverState)",
             "Lifetime delegate entries: raw=\(callbackAudit.count()) accepted=\(acceptedDelegateEntryCount) stale=\(rejectedDelegateEntryCount)",
             "Measurement window (Clear Measurements resets): callbacks=\(callbackCount) empty=\(emptyCallbackCount) measurements=\(totalMeasurementsReceived) anchors=\(observationsByAddress.count)",
@@ -138,6 +144,9 @@ final class DLTDOAManager: NSObject, ObservableObject {
     @objc private func applicationLifecycleChanged(_ notification: Notification) {
         auditLogger.notice("application lifecycle session=\(self.sessionAuditIdentity, privacy: .public) event=\(notification.name.rawValue, privacy: .public) state=\(self.applicationStateText, privacy: .public)")
         appendLog(.info, "Lifecycle: \(notification.name.rawValue), state=\(applicationStateText)")
+        if notification.name == UIApplication.didBecomeActiveNotification {
+            resumeIfReady()
+        }
     }
 
     deinit {
@@ -179,6 +188,7 @@ final class DLTDOAManager: NSObject, ObservableObject {
     }
 
     func startSession() {
+        guard !sessionRequested && !pendingStartAfterAuth else { return }
         guard isSupported else {
             statusMessage = "DL-TDoA unsupported on this device/OS."
             appendLog(.error, statusMessage)
@@ -188,6 +198,8 @@ final class DLTDOAManager: NSObject, ObservableObject {
         let auth = locationManager.authorizationStatus
         if auth == .notDetermined {
             pendingStartAfterAuth = true
+            sessionRequested = true
+            lifecycleState = "Authorization pending"
             statusMessage = "Waiting for location authorization..."
             requestLocationPermission()
             return
@@ -205,8 +217,16 @@ final class DLTDOAManager: NSObject, ObservableObject {
             return
         }
 
-        stopSession()
+        guard UIApplication.shared.applicationState == .active else {
+            statusMessage = "Start requires the app to be active."
+            return
+        }
+        configuredNetworkID = netID
+        sessionRequested = true
+        createSession(networkID: netID)
+    }
 
+    private func createSession(networkID netID: Int) {
         if #available(iOS 26.0, *) {
             let session = NISession()
             sessionAuditIdentity = callbackAudit.attach(session)
@@ -234,7 +254,19 @@ final class DLTDOAManager: NSObject, ObservableObject {
             sessionStartedAt = ProcessInfo.processInfo.systemUptime
             clearMeasurements()
             niState = "Requested (not proof of UWB reception)"
-            watchdog = Task { @MainActor [weak self] in
+            startWatchdog()
+            lifecycleState = "Requested"
+            auditLogger.notice("run requested session=\(self.sessionAuditIdentity, privacy: .public)")
+            session.run(config)
+            auditLogger.notice("run returned session=\(self.sessionAuditIdentity, privacy: .public); not proof of reception")
+            isRunning = true
+            statusMessage = "Session requested (Network ID: \(netID)) - waiting for DL-TDoA measurements"
+        }
+    }
+
+    private func startWatchdog() {
+        watchdog?.cancel()
+        watchdog = Task { @MainActor [weak self] in
                 while !Task.isCancelled {
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
                     guard !Task.isCancelled, let self else { return }
@@ -252,15 +284,31 @@ final class DLTDOAManager: NSObject, ObservableObject {
                     }
                 }
             }
-            auditLogger.notice("run requested session=\(self.sessionAuditIdentity, privacy: .public)")
-            session.run(config)
-            auditLogger.notice("run returned session=\(self.sessionAuditIdentity, privacy: .public); not proof of reception")
-            isRunning = true
-            statusMessage = "Session requested (Network ID: \(netID)) - waiting for DL-TDoA measurements"
-        }
+    }
+
+    private func resumeIfReady() {
+        guard sessionRequested, pendingResume, !suspended,
+              UIApplication.shared.applicationState == .active,
+              let netID = configuredNetworkID else { return }
+        pendingResume = false // consume before creating; duplicate notifications cannot restart
+        lifecycleState = "Restarting"
+        niState = "Restarting after suspension"
+        appendLog(.info, "Restarting suspended lifecycle with retained networkID=\(netID)")
+        let oldSession = niSession
+        niSession = nil // reject queued callbacks before invalidation
+        appendLog(.info, "Audit invalidate old suspended session=\(sessionAuditIdentity)")
+        oldSession?.invalidate()
+        createSession(networkID: netID)
     }
 
     func stopSession() {
+        sessionRequested = false
+        suspended = false
+        pendingResume = false
+        configuredNetworkID = nil
+        lifecycleState = "Stopped"
+        sessionStartedAt = nil
+        statusMessage = "Stopped"
         watchdog?.cancel()
         watchdog = nil
         pendingStartAfterAuth = false
@@ -268,8 +316,9 @@ final class DLTDOAManager: NSObject, ObservableObject {
         if niSession != nil {
             auditLogger.notice("invalidate requested session=\(self.sessionAuditIdentity, privacy: .public)")
             appendLog(.warning, "Audit invalidate requested session=\(sessionAuditIdentity)")
-            niSession?.invalidate()
+            let oldSession = niSession
             niSession = nil
+            oldSession?.invalidate()
             appendLog(.warning, "NISession invalidated by user.")
         }
         isRunning = false
@@ -344,6 +393,8 @@ extension DLTDOAManager: CLLocationManagerDelegate {
                            "Location authorization: \(self.locationStatusText)")
             if self.pendingStartAfterAuth {
                 self.pendingStartAfterAuth = false
+                self.sessionRequested = false
+                self.lifecycleState = "Idle"
                 if self.isAuthorizedForLocation {
                     self.startSession()
                 } else {
@@ -387,16 +438,17 @@ extension DLTDOAManager: NISessionDelegate {
 
         Task { @MainActor in
             self.rawDelegateEntryCount = self.callbackAudit.count()
-            guard self.niSession === session else {
+            guard self.niSession === session, self.sessionRequested, !self.suspended, !self.pendingResume else {
                 self.rejectedDelegateEntryCount += 1
-                self.auditLogger.notice("rejected stale callback session=\(audit.identity, privacy: .public)")
-                self.appendLog(.warning, "Rejected previous-session callback \(audit.identity)")
+                self.auditLogger.notice("rejected stale or paused callback session=\(audit.identity, privacy: .public)")
+                self.appendLog(.warning, "Rejected stale or paused-session callback \(audit.identity)")
                 return
             }
             self.acceptedDelegateEntryCount += 1
             self.auditLogger.notice("accepted callback session=\(audit.identity, privacy: .public)")
             self.callbackCount += 1
             self.lastCallbackAt = now
+            self.lifecycleState = "Receiving"
             self.niState = "Callback received"
             self.receiveStatus = "Callback: \(parsed.count) measurements"
             if parsed.isEmpty { self.emptyCallbackCount += 1 }
@@ -439,6 +491,11 @@ extension DLTDOAManager: NISessionDelegate {
             self.niState = "Invalidated: \(message)"
             self.sessionStartedAt = nil
             self.isRunning = false
+            self.sessionRequested = false
+            self.suspended = false
+            self.pendingResume = false
+            self.configuredNetworkID = nil
+            self.lifecycleState = "Invalidated"
             self.niSession = nil
             self.statusMessage = "Session invalidated: \(error.localizedDescription)"
             self.appendLog(.error, "didInvalidateWith: \(message)")
@@ -449,6 +506,15 @@ extension DLTDOAManager: NISessionDelegate {
     nonisolated func sessionWasSuspended(_ session: NISession) {
         Task { @MainActor in
             guard self.niSession === session else { return }
+            guard self.sessionRequested else { return }
+            self.suspended = true
+            self.pendingResume = false
+            self.isRunning = false
+            self.lifecycleState = "Suspended"
+            self.watchdog?.cancel()
+            self.watchdog = nil
+            self.sessionStartedAt = nil
+            self.receiveStatus = "Paused while suspended"
             self.niState = "Suspended"
             self.statusMessage = "Session suspended"
             self.appendLog(.warning, "Session suspended by system.")
@@ -458,8 +524,14 @@ extension DLTDOAManager: NISessionDelegate {
     nonisolated func sessionSuspensionEnded(_ session: NISession) {
         Task { @MainActor in
             guard self.niSession === session else { return }
-            self.niState = "Suspension ended (no automatic restart)"
-            self.appendLog(.info, "Session suspension ended; appState=\(self.applicationStateText). No automatic restart during diagnostics.")
+            guard self.sessionRequested, self.suspended else { return }
+            self.suspended = false
+            self.pendingResume = true
+            self.lifecycleState = "Resume pending"
+            self.niState = "Resume pending (requires active app)"
+            self.statusMessage = "Suspension ended; waiting for active app to restart"
+            self.appendLog(.info, "Session suspension ended; appState=\(self.applicationStateText), resume pending")
+            self.resumeIfReady()
         }
     }
 }

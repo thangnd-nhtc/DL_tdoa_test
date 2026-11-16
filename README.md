@@ -19,3 +19,10 @@
 ## Lưu ý về Discovery (BLE / Wi-Fi)
 - Theo tài liệu Apple, `NIDLTDOAConfiguration(networkIdentifier: 42)` dùng **BLE** (mặc định) hoặc **Wi-Fi** (iOS 27+) để **discover** anchor trước khi thu UWB DL-TDoA.
 - Kit **QM35825 DK-05** chỉ có chip UWB, **không có BLE hay Wi-Fi**. Vì vậy, để iPhone thực sự kích hoạt được `session(_:didUpdateDLTDOA:)`, bạn cần thêm một thiết bị phát BLE/Wi-Fi discovery theo **Nearby Interaction Accessory Specification** của Apple (tài liệu này nằm sau cổng đăng nhập Apple Developer: `https://developer.apple.com/nearby-interaction/specification`).
+
+### Lifecycle status
+DL-TDoA now distinguishes Requested, Receiving, Suspended, Resume pending,
+Restarting, Stopped and Invalidated. Stop is available while suspended/pending.
+A resumed session uses the original configured network ID and a fresh session;
+a tab/view stop or invalidation cancels automatic resume. See CALLBACK_AUDIT.md
+for deterministic lifecycle acceptance fixtures and outstanding device validation.

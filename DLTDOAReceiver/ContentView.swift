@@ -75,7 +75,7 @@ struct ContentView: View {
                         Circle()
                             .fill(manager.isRunning ? Color.green : Color.gray.opacity(0.5))
                             .frame(width: 9, height: 9)
-                        Text(manager.isRunning ? "SESSION" : "IDLE")
+                        Text(manager.lifecycleState.uppercased())
                             .font(.caption.bold().monospaced())
                             .foregroundStyle(manager.isRunning ? .green : .secondary)
                     }
@@ -189,7 +189,7 @@ struct ContentView: View {
                     .multilineTextAlignment(.trailing)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 90)
-                    .disabled(manager.isRunning)
+                    .disabled(manager.sessionRequested)
             }
 
             HStack {
@@ -209,7 +209,7 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(manager.isRunning || !manager.isSupported)
+                .disabled(manager.sessionRequested || !manager.isSupported)
 
                 Button(role: .destructive) {
                     manager.stopSession()
@@ -218,7 +218,7 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
-                .disabled(!manager.isRunning)
+                .disabled(!manager.sessionRequested)
 
                 Button {
                     manager.clearMeasurements()

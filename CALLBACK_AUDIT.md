@@ -41,3 +41,44 @@ This checks SDK type/isolation compatibility, not signing, entitlements, RF rece
 - Existing `ContentView.onDisappear { manager.stopSession() }` can invalidate the DL-TDoA session when the view disappears, including possible tab navigation. This behavior is intentionally unchanged; keep the receiver view visible and correlate invalidate logs / stopSession call stacks before attributing silence to radio issues. No speculative lifecycle fix or automatic restart was added.
 
 No simulated callback injection is used or presented as evidence of real reception.
+
+## Suspension/resume regression fixtures (2026-11)
+
+Apple suspension contract: suspended sessions cannot deliver new measurements; after
+`sessionSuspensionEnded` the app must run a configuration again. See
+https://developer.apple.com/documentation/nearbyinteraction/nisessiondelegate/sessionsuspensionended(_:)
+
+This app deliberately invalidates the old instance before creating a new one on
+resume. The configured integer network ID is retained, even if UI text changes.
+Requested means `run` was called, not RF reception. Suspended / Resume pending
+means no active run and the watchdog is cancelled. Restarting is logged before
+the new Requested state. Stop (including view disappearance) cancels resume;
+arbitrary invalidation never auto-restarts. Lifetime callback audit is retained;
+the measurement window and 10-second watchdog restart for the new run.
+
+### Deterministic event fixtures
+
+Run these on an iOS device/debugger by delivering the indicated delegate/lifecycle
+events in order. They are persisted acceptance fixtures, not an automated simulator
+or a claim that Windows compiled the app. Assert both UI state and audit log order.
+
+| Events | Required result |
+|---|---|
+| Start 42; Start again | One attach/run; Requested; Start disabled |
+| Start; suspend | isRunning=false; Suspended; Stop enabled; no watchdog timeout while suspended |
+| suspend; suspensionEnded while background; didBecomeActive | Resume pending until active, then exactly one old invalidate/new attach/run with ID 42 |
+| suspend; didBecomeActive; suspensionEnded | Exactly one restart, only after suspension ended |
+| suspensionEnded twice; didBecomeActive twice | No additional restart |
+| suspend; suspensionEnded while inactive; Stop; didBecomeActive | Stopped; no attach/run |
+| suspend; view disappears; suspensionEnded; didBecomeActive | Stopped; old callback ignored; no restart |
+| invalidate; didBecomeActive | Invalidated; no automatic restart |
+| old-session measurement/invalidation after restart | Measurement rejected and lifetime stale count incremented; invalidation ignored; new session unchanged |
+| suspend; measurement from current instance | Rejected; cannot overwrite Suspended UI |
+| new run; no callbacks for 10 active seconds | One timeout report; no proof of nearbyd timeout or RF cause |
+| permission not determined; Start; Stop; grant permission | No automatic start after Stop |
+| imported empty text / whitespace / `.` | Clear no-meaningful-log-text message, no pretend marker summary |
+
+**Diagnosis boundary:** zero callbacks before background remains unexplained. This
+lifecycle change does not fix or prove any radio, discovery, entitlement, GATT,
+synchronization, or solver issue. Build/type-check in Xcode and repeat real-device
+background/foreground tests before release.

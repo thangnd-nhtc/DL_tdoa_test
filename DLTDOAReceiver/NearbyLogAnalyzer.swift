@@ -3,6 +3,9 @@
 /// Heuristic text matching only: no daemon access and no inferred session correlation.
 enum NearbyLogAnalyzer {
     static func summary(_ text: String) -> String {
+        guard text.unicodeScalars.contains(where: { CharacterSet.alphanumerics.contains($0) }) else {
+            return "No meaningful log text supplied. Paste externally collected nearbyd log lines; whitespace or punctuation alone cannot be analyzed."
+        }
         let lines = text.components(separatedBy: .newlines)
         let markers: [(String, [String])] = [
             ("Scanned OOB", ["scanned oob"]),
