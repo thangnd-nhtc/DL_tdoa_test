@@ -68,8 +68,13 @@ def main():
     parser.add_argument("--log", type=Path, required=True, help="Captured initiator anchor configuration log")
     parser.add_argument("--advertise", action="store_true", help="Actually broadcast; default only prints bytes")
     parser.add_argument("--seconds", type=float, default=120)
+    parser.add_argument("--readback-json", type=Path, help="Require A GET evidence matching exact bytes before publishing")
     args = parser.parse_args()
     data, ad, settings = build(args.log)
+    if args.readback_json:
+        from sts_readback import verify
+        verify(json.loads(args.readback_json.read_text(encoding="utf-8")), data)
+        print("OOB STS: MATCH A GET for exact publisher service-data bytes")
     print(json.dumps(settings, indent=2))
     print("Expected AD structure:", ad.hex(" "))
     print("Service data excluding UUID:", data[2:].hex(" "))

@@ -11,6 +11,12 @@ enum LogFilter: String, CaseIterable, Identifiable {
 struct ContentView: View {
     @StateObject private var manager = DLTDOAManager()
 
+    @State private var showImport = false
+    @State private var importedText = ""
+    @State private var importedSummary = ""
+    @State private var exportText = ""
+    @State private var showReport = false
+
     @State private var logFilter: LogFilter = .all
 
     private var filteredLogs: [LogEntry] {
@@ -32,12 +38,36 @@ struct ContentView: View {
                     controlsCard
                     positionCard
                     anchorsCard
+                    diagnosticsCard
                     logsCard
                 }
                 .padding()
             }
             .background(Color(.systemGroupedBackground))
             .navigationTitle("DL-TDoA Receiver")
+            .sheet(isPresented: $showImport) {
+                NavigationStack {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Paste externally collected nearbyd text. This is imported evidence, not a live system log. Review for sensitive data before sharing.").font(.caption)
+                        TextEditor(text: $importedText).font(.system(.caption, design: .monospaced))
+                        Button("Analyze imported text") {
+                            importedSummary = NearbyLogAnalyzer.summary(importedText)
+                            showImport = false
+                        }.buttonStyle(.borderedProminent)
+                    }.padding().navigationTitle("Import nearbyd text")
+                        .toolbar { Button("Cancel") { showImport = false } }
+                }
+            }
+            .sheet(isPresented: $showReport) {
+                NavigationStack {
+                    ScrollView { Text(exportText).font(.system(.caption, design: .monospaced)).textSelection(.enabled).padding() }
+                        .navigationTitle("Diagnostic report")
+                        .toolbar {
+                            ShareLink(item: exportText) { Label("Share", systemImage: "square.and.arrow.up") }
+                            Button("Done") { showReport = false }
+                        }
+                }
+            }
             .onDisappear { manager.stopSession() }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -55,6 +85,41 @@ struct ContentView: View {
                 }
             }
         }
+    }
+
+    private var diagnosticsCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Diagnostics", systemImage: "stethoscope").font(.headline)
+            Text("App evidence is available without Mac Console. nearbyd system logs are not accessible inside this iOS app; paste an external capture for optional analysis.")
+                .font(.caption).foregroundStyle(.secondary)
+            Button("View / share current report") {
+                exportText = manager.diagnosticReport() + importedEvidence
+                showReport = true
+            }
+            Text(manager.reportReason).font(.caption)
+            if !manager.lastDiagnosticReport.isEmpty {
+                Button("View / share automatic snapshot") {
+                    exportText = manager.lastDiagnosticReport + importedEvidence
+                    showReport = true
+                }
+            }
+            Button("Paste external nearbyd log…") { showImport = true }
+            if !importedSummary.isEmpty {
+                Text(importedSummary).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                Button("Clear imported evidence", role: .destructive) {
+                    importedText = ""
+                    importedSummary = ""
+                }
+            }
+            Text("Reports contain session identifiers and app logs. Review before sharing. Automatic snapshots are in memory; export before closing the app.")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading).padding()
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private var importedEvidence: String {
+        importedSummary.isEmpty ? "" : "\n\n\(importedSummary)\nImported raw text (unverified origin/session):\n\(importedText)"
     }
 
     private var statusCard: some View {

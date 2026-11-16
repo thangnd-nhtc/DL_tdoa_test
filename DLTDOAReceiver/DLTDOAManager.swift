@@ -67,6 +67,37 @@ final class DLTDOAManager: NSObject, ObservableObject {
     @Published var statusMessage: String = "Idle"
     @Published var logs: [LogEntry] = []
     @Published var logRawPackets: Bool = true
+    @Published private(set) var lastDiagnosticReport = ""
+    @Published private(set) var reportReason = "No automatic report yet"
+    private var diagnosticLogLines: [String] = []
+    private var runStartedAt: Date?
+    private var runNetworkID = "none"
+    private var timeoutReportCaptured = false
+
+    func diagnosticReport(reason: String = "Manual export") -> String {
+        let iso = ISO8601DateFormatter()
+        return [
+            "DL-TDoA app diagnostics — \(reason)",
+            "Generated: \(iso.string(from: Date()))",
+            "Source: this app only. iOS public APIs do not expose nearbyd system logs to this app.",
+            "Run start: \(runStartedAt.map { iso.string(from: $0) } ?? "none")",
+            "Session: \(sessionAuditIdentity); run network ID: \(runNetworkID); configured network ID: \(networkIdentifierText)",
+            "Device: \(UIDevice.current.model); OS: \(UIDevice.current.systemVersion)",
+            "DL-TDoA supported: \(isSupported); \(supportReason)",
+            "App: \(applicationStateText); location: \(locationStatusText); running: \(isRunning)",
+            "NI: \(niState); receive: \(receiveStatus); solver: \(solverState)",
+            "Lifetime delegate entries: raw=\(callbackAudit.count()) accepted=\(acceptedDelegateEntryCount) stale=\(rejectedDelegateEntryCount)",
+            "Measurement window (Clear Measurements resets): callbacks=\(callbackCount) empty=\(emptyCallbackCount) measurements=\(totalMeasurementsReceived) anchors=\(observationsByAddress.count)",
+            "Last accepted callback: \(lastCallbackAt.map { iso.string(from: $0) } ?? "none")",
+            "App history since launch/explicit clear; includes earlier runs. Packet logs may be disabled/throttled; not every RF packet.",
+            diagnosticLogLines.joined(separator: "\n")
+        ].joined(separator: "\n")
+    }
+
+    private func captureDiagnosticReport(_ reason: String) {
+        reportReason = reason
+        lastDiagnosticReport = diagnosticReport(reason: reason)
+    }
 
     @Published var networkIdentifierText: String = "42"
 
@@ -197,6 +228,9 @@ final class DLTDOAManager: NSObject, ObservableObject {
             appendLog(.info, "Requesting DL-TDoA NISession (networkID=\(netID), discovery=BLE)")
 
             appendLog(.info, "Before run: appState=\(applicationStateText), location=\(locationStatusText)")
+            runStartedAt = Date()
+            runNetworkID = String(netID)
+            timeoutReportCaptured = false
             sessionStartedAt = ProcessInfo.processInfo.systemUptime
             clearMeasurements()
             niState = "Requested (not proof of UWB reception)"
@@ -210,8 +244,10 @@ final class DLTDOAManager: NSObject, ObservableObject {
                         self.receiveStatus = String(format: "Last callback %.0f s ago", Date().timeIntervalSince(last))
                     } else {
                         self.receiveStatus = String(format: "Waiting %.0f s; no NI callback", elapsed)
-                        if Int(elapsed) == 10 {
+                        if elapsed >= 10 && !self.timeoutReportCaptured {
+                            self.timeoutReportCaptured = true
                             self.appendLog(.warning, "10 s without didUpdateDLTDOA: solver has not received data. Check NI/UWB discovery and synchronization.")
+                            self.captureDiagnosticReport("10 s without NI callback (not a nearbyd timeout verdict)")
                         }
                     }
                 }
@@ -257,6 +293,7 @@ final class DLTDOAManager: NSObject, ObservableObject {
 
     func clearLogs() {
         logs.removeAll()
+        diagnosticLogLines.removeAll()
     }
 
     func copyLogsToClipboard() {
@@ -290,6 +327,7 @@ final class DLTDOAManager: NSObject, ObservableObject {
 
     private func appendLog(_ level: LogLevel, _ message: String) {
         let entry = LogEntry(timestamp: Date(), level: level, message: message)
+        diagnosticLogLines.append("\(ISO8601DateFormatter().string(from: entry.timestamp)) [\(level.rawValue)] \(message)")
         logs.insert(entry, at: 0)
         if logs.count > 200 {
             logs.removeLast(logs.count - 200)
@@ -404,6 +442,7 @@ extension DLTDOAManager: NISessionDelegate {
             self.niSession = nil
             self.statusMessage = "Session invalidated: \(error.localizedDescription)"
             self.appendLog(.error, "didInvalidateWith: \(message)")
+            self.captureDiagnosticReport("Session invalidated")
         }
     }
 

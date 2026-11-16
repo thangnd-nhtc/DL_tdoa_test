@@ -107,6 +107,7 @@ def main() -> int:
     parser.add_argument("-s", "--session", type=str, default="42", help="Session ID / Network ID (default: 42)")
     parser.add_argument("-t", "--time", type=int, default=-1, help="Duration in seconds, -1 for until Ctrl+C (default: -1)")
     parser.add_argument("--extra-ports", nargs="*", default=[], help="Additional COM/FTDI ports to probe")
+    parser.add_argument("--audit-readback", action="store_true", help="GET app config before START; per-kit JSON; fail on missing/mismatched fields")
     parser.add_argument('--ble-oob', action='store_true', help='Publish experimental FFF3 BLE OOB')
     parser.add_argument('--timing-profile', choices=['qm35', 'android-oob'], default='qm35',
                         help='qm35: 200ms/25 slots (unchanged); android-oob: experimental AOSP defaults 250ms/10 slots, NOT verified Apple defaults')
@@ -200,6 +201,9 @@ def main() -> int:
                 f"--role-per-round={cfg['role_per_round']}",
                 f"--dl-tdoa-anchor-location={cfg['location']}",
             ]
+            if args.audit_readback:
+                (LOG_DIR / f"{name}.readback.json").unlink(missing_ok=True)
+                cmd.extend(["--readback-json", str(LOG_DIR / f"{name}.readback.json")])
             if cfg["dest_per_round"]:
                 cmd.append(f"--dest-per-round={cfg['dest_per_round']}")
             if cfg["is_time_ref"]:
@@ -223,7 +227,7 @@ def main() -> int:
             ready = False
             while time.time() < deadline:
                 if proc.poll() is not None:
-                    print(f"ERROR: Kit {name} exited early with code {proc.returncode}. Check {stderr_path}", flush=True)
+                    print(f"ERROR: Kit {name} STS UNVERIFIED (inspect readback JSON); exited early with code {proc.returncode}. Check {stderr_path}", flush=True)
                     cleanup()
                     return 1
                 try:
@@ -240,16 +244,43 @@ def main() -> int:
             else:
                 print(f"  -> Warning: Kit {name} did not log 'Starting ranging...' within 15s, continuing...", flush=True)
 
+        if args.audit_readback:
+            import json
+            from sts_readback import verify
+            from advertise_dltdoa_oob import build
+            baseline = None
+            for name in KITS:
+                try:
+                    report = json.loads((LOG_DIR / f"{name}.readback.json").read_text(encoding="utf-8"))
+                    sts = verify(report)
+                    if baseline is None:
+                        baseline = sts
+                    elif sts != baseline:
+                        raise ValueError("STS differs from A GET")
+                    print(f"  -> Kit {name}: GET VendorId / StaticStsIv MATCH requested and A", flush=True)
+                except Exception as exc:
+                    print(f"  -> Kit {name}: STS UNVERIFIED/FAIL: {exc}", flush=True)
+                    return 1
+            data, _, _ = build(LOG_DIR / "A.stdout.log")
+            try:
+                verify(json.loads((LOG_DIR / "A.readback.json").read_text(encoding="utf-8")), data)
+            except ValueError as exc:
+                print(f"  -> OOB STS: FAIL/UNVERIFIED: {exc}", flush=True)
+                return 1
+            print("  -> OOB STS: MATCH A GET (exact service-data bytes; not proof of on-air reception)", flush=True)
         if args.ble_oob:
             from advertise_dltdoa_oob import build
             _, _, settings = build(LOG_DIR / "A.stdout.log")
             if settings["session_id"] != int(args.session):
                 raise ValueError("BLE and anchor session mismatch")
-            ble_proc = subprocess.Popen([
+            ble_cmd = [
                 python_exe, "-u", str(Path(__file__).with_name("advertise_dltdoa_oob.py")),
                 "--log", str(LOG_DIR / "A.stdout.log"), "--advertise",
                 "--seconds", str(args.time if args.time > 0 else 31536000),
-            ], cwd=str(UQT_ROOT))
+            ]
+            if args.audit_readback:
+                ble_cmd.extend(["--readback-json", str(LOG_DIR / "A.readback.json")])
+            ble_proc = subprocess.Popen(ble_cmd, cwd=str(UQT_ROOT))
         print("\nAll 4 anchors launched. Ctrl+C stops anchors and BLE.", flush=True)
         while any(p.poll() is None for _, p, _, _ in procs):
             time.sleep(1.0)
